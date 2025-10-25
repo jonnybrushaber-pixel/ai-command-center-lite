@@ -144,3 +144,66 @@ elif widget == "Bank Balances":
 elif widget == "Price Tracker":
     st.subheader("Price Tracker")
     st.write("Watching 34 items (demo). Auto updates coming.")
+# ================= APPEND-ONLY: Upload & Analyze Credit Card Statement =================
+import io
+import pandas as _pd
+import numpy as _np
+import streamlit as st as _st  # alias to avoid name clashes
+
+_ _HEADER_SHOWN = _st.session_state.get("_cc_uploader_shown", False)
+if not _ _HEADER_SHOWN:
+    _st.session_state["_cc_uploader_shown"] = True
+
+_st.markdown("---")
+_st.subheader("📤 Upload & Analyze Your Credit Card Statement")
+
+_file = _st.file_uploader(
+    "Drop a CSV or Excel statement (no changes needed above).",
+    type=["csv", "xlsx", "xls"],
+    key="cc_upload_v1",
+)
+
+def _infer_cols(df: _pd.DataFrame):
+    l = {c.lower().strip(): c for c in df.columns}
+    date_col = l.get("date") or l.get("transaction date") or l.get("posted date") or l.get("post date")
+    amt_col  = l.get("amount") or l.get("transaction amount") or l.get("debit") or l.get("charge") or l.get("amt")
+    desc_col = l.get("description") or l.get("merchant") or l.get("payee") or l.get("details") or l.get("memo")
+    cat_col  = l.get("category") or l.get("merchant category") or l.get("type")
+    return date_col, amt_col, desc_col, cat_col
+
+def _normalize(df, date_col, amt_col, desc_col, cat_col):
+    x = df.copy()
+    x[date_col] = _pd.to_datetime(x[date_col], errors="coerce")
+    x = x.dropna(subset=[date_col])
+    x[amt_col] = _pd.to_numeric(x[amt_col], errors="coerce").fillna(0.0)
+    # make spending positive
+    if (x[amt_col] < 0).mean() > 0.5:
+        x[amt_col] = -x[amt_col]
+    x = x.rename(columns={date_col:"date", amt_col:"amount", (desc_col or "description"):"description"})
+    if cat_col: x = x.rename(columns={cat_col:"category"})
+    else: x["category"] = "Uncategorized"
+    x["date"] = _pd.to_datetime(x["date"])
+    x["month"] = x["date"].dt.to_period("M").astype(str)
+    x["dow"] = x["date"].dt.day_name()
+    x["hour"] = getattr(x["date"].dt, "hour", _pd.Series(0, index=x.index))
+    x["description"] = x["description"].astype(str).str.strip()
+    x = x[x["amount"] != 0]
+    return x[["date","month","dow","hour","amount","description","category"]]
+
+def _recs(clean: _pd.DataFrame):
+    tips = []
+    if clean.empty: return tips
+    by_m = clean.groupby("month", as_index=False)["amount"].sum().sort_values("month")
+    if len(by_m) >= 2:
+        last, prev = by_m["amount"].iloc[-1], by_m["amount"].iloc[-2]
+        delta = last - prev
+        pct = (delta/prev*100) if prev else 0
+        msg = "increased" if delta>0 else "decreased"
+        tips.append(f"Monthly spend {msg} by ${abs(delta):,.0f} ({pct:+.1f}%).")
+    by_cat = clean.groupby("category", as_index=False)["amount"].sum().sort_values("amount", ascending=False)
+    if not by_cat.empty:
+        tops = ", ".join([f"{r.category} (${r.amount:,.0f})" for r in by_cat.head(3).itertuples()])
+        tips.append(f"Top categories: {tops}. Consider category caps or alerts.")
+    by_dow = clean.groupby("dow", as_
+
+
